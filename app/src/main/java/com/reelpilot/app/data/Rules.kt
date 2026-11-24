@@ -80,7 +80,7 @@ object VideoRules {
         else if (vertical) Check(Level.OK, "Vertical 9:16", "${v.width} × ${v.height}")
         else Check(Level.BAD, "Not vertical 9:16", "${v.width} × ${v.height}. Crop to 1080 × 1920 so it fills the phone screen.")
 
-        out += when {
+        when {
             v.width >= 1080 && v.height >= 1920 -> Check(Level.OK, "Full HD", "Looks sharp in the Reels feed.")
             v.width >= 540 && v.height >= 960 -> Check(Level.WARN, "Below 1080p", "Allowed, but 1080 × 1920 looks sharper.")
             v.width > 0 -> Check(Level.BAD, "Resolution too low", "Meta needs at least 540 × 960.")
