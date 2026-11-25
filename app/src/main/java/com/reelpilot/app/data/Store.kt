@@ -142,6 +142,11 @@ object Store {
 
     fun disconnect() = saveAccount(Account(apiVersion = _account.value.apiVersion))
 
+    /** Optional Claude API key for AI captions. Encrypted, stays on this phone. */
+    var aiKey: String
+        get() = secure.getString("aiKey", "") ?: ""
+        set(v) = secure.edit().putString("aiKey", v.trim()).apply()
+
     // ---------- preferences ----------
     var defaultTags: String
         get() = plain.getString("defaultTags", "#gaming #gameplay #reels") ?: ""

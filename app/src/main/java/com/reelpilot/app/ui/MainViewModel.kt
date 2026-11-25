@@ -19,6 +19,14 @@ import com.reelpilot.app.data.Store
 import com.reelpilot.app.data.VideoInfo
 import com.reelpilot.app.data.VideoRules
 import com.reelpilot.app.work.UploadWorker
+import com.reelpilot.app.work.AutoWorker
+import com.reelpilot.app.data.AutoConfig
+import com.reelpilot.app.data.AutoItem
+import com.reelpilot.app.data.AutoStore
+import com.reelpilot.app.data.Caption
+import com.reelpilot.app.data.CaptionMaker
+import android.content.Intent
+import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -30,7 +38,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 
-enum class Tab { Home, Facebook, Instagram, Settings }
+enum class Tab { Home, Auto, Facebook, Instagram, Settings }
 
 sealed interface Overlay {
     data class Composer(val fb: Boolean, val ig: Boolean) : Overlay
@@ -246,5 +254,64 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         File(job.filePath).delete()
         Store.deleteJob(job.id)
         back()
+    }
+
+    // ---------------- Auto Pilot ----------------
+
+    val autoConfig: StateFlow<AutoConfig> = AutoStore.config
+    val autoItems: StateFlow<List<AutoItem>> = AutoStore.items
+    val autoError = MutableStateFlow<String?>(null)
+    val captionPreview = MutableStateFlow<Caption?>(null)
+    val previewBusy = MutableStateFlow(false)
+    val aiKey = MutableStateFlow(Store.aiKey)
+
+    fun updateAuto(change: (AutoConfig) -> AutoConfig) {
+        val next = change(AutoStore.config.value)
+        AutoStore.save(next)
+        val app = getApplication<Application>()
+        if (next.enabled) AutoWorker.schedule(app) else AutoWorker.stop(app)
+    }
+
+    fun setAiKey(k: String) { Store.aiKey = k; aiKey.value = k.trim() }
+
+    fun chooseFolder(uri: Uri) {
+        val app = getApplication<Application>()
+        try {
+            app.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (e: Exception) {
+            autoError.value = "Android didn't allow access to that folder. Pick another one."
+            return
+        }
+        val old = AutoStore.config.value.folderUri
+        if (old.isNotBlank() && old != uri.toString()) {
+            try { app.contentResolver.releasePersistableUriPermission(Uri.parse(old), Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) { }
+        }
+        val name = DocumentFile.fromTreeUri(app, uri)?.name ?: "Selected folder"
+        autoError.value = null
+        // Videos already in the folder count as new: they'll be posted one per slot.
+        if (old != uri.toString()) AutoStore.clearItems()
+        updateAuto { it.copy(folderUri = uri.toString(), folderName = name) }
+        AutoWorker.runNow(app, force = false)
+    }
+
+    fun scanNow() = AutoWorker.runNow(getApplication<Application>(), force = false)
+    fun postNextNow() = AutoWorker.runNow(getApplication<Application>(), force = true)
+
+    fun skipItem(item: AutoItem) = AutoStore.upsert(item.copy(status = AutoItem.SKIPPED, message = "Skipped by you"))
+    fun requeueItem(item: AutoItem) = AutoStore.upsert(item.copy(status = AutoItem.WAITING, message = ""))
+
+    fun previewCaption() {
+        val item = AutoStore.waiting().firstOrNull() ?: AutoStore.items.value.firstOrNull()
+        if (item == null) { autoError.value = "Add a video to your folder first."; return }
+        viewModelScope.launch {
+            previewBusy.value = true
+            try {
+                val uri = Uri.parse(item.docId)
+                val info = withContext(Dispatchers.IO) { VideoRules.inspect(getApplication<Application>(), uri) }
+                captionPreview.value = CaptionMaker.make(getApplication<Application>(), uri, item.docId + System.currentTimeMillis(), info.durationSec, AutoStore.config.value)
+            } catch (e: Exception) {
+                autoError.value = "Couldn't read ${item.name}."
+            } finally { previewBusy.value = false }
+        }
     }
 }

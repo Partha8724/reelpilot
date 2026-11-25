@@ -6,6 +6,7 @@ An Android app for gaming creators: check your own gameplay clips against Meta's
 - **Studio**: new Reel, live upload progress, today's posting limits, growth tips.
 - **Composer**: picks a video and checks 9:16, resolution, length, frame rate, codecs and size. Includes an originality checklist, a caption builder that flags engagement bait, hashtag suggestions, Facebook scheduling and an AI label.
 - **Background uploads**: WorkManager foreground job with a notification. Survives closing the app, retries on network drops and resumes Facebook uploads from the last byte.
+- **Auto Pilot**: pick one folder. Every 15 minutes ReelPilot finds new clips, checks them, writes a hook, caption, question and hashtags (templates in English, Hinglish or Hindi, or Claude AI reading 3 frames), then posts at your chosen times with a daily cap.
 - **Facebook tab**: Page header, followers, recent videos.
 - **Instagram tab**: profile, stats, API quota, recent posts grid.
 - **Settings**: connect or switch Page, defaults, setup guide.

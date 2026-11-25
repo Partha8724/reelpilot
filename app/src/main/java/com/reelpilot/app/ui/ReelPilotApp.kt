@@ -30,6 +30,7 @@ import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.CameraAlt
 import androidx.compose.material.icons.rounded.Facebook
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.RocketLaunch
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -44,6 +45,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.reelpilot.app.ui.screens.AutoScreen
 import com.reelpilot.app.ui.screens.ComposerScreen
 import com.reelpilot.app.ui.screens.ConnectScreen
 import com.reelpilot.app.ui.screens.FacebookScreen
@@ -69,6 +71,7 @@ fun ReelPilotApp(vm: MainViewModel = viewModel()) {
                 AnimatedContent(tab, transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) }, label = "tabs") { t ->
                     when (t) {
                         Tab.Home -> HomeScreen(vm)
+                        Tab.Auto -> AutoScreen(vm)
                         Tab.Facebook -> FacebookScreen(vm)
                         Tab.Instagram -> InstagramScreen(vm)
                         Tab.Settings -> SettingsScreen(vm)
@@ -104,6 +107,7 @@ fun ReelPilotApp(vm: MainViewModel = viewModel()) {
 private fun TabBar(current: Tab, onSelect: (Tab) -> Unit) {
     val items = listOf(
         Triple(Tab.Home, Icons.Rounded.Home, "Studio"),
+        Triple(Tab.Auto, Icons.Rounded.RocketLaunch, "Auto"),
         Triple(Tab.Facebook, Icons.Rounded.Facebook, "Facebook"),
         Triple(Tab.Instagram, Icons.Rounded.CameraAlt, "Instagram"),
         Triple(Tab.Settings, Icons.Rounded.Settings, "Settings"),
@@ -121,7 +125,7 @@ private fun TabItem(icon: ImageVector, label: String, selected: Boolean, onClick
     val color = if (selected) Pal.c.blue else Pal.c.secondary
     Column(
         Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 2.dp),
+            .padding(horizontal = 8.dp, vertical = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(icon, label, tint = color, modifier = Modifier.size(26.dp))
