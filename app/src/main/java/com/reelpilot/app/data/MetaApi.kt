@@ -137,6 +137,49 @@ class MetaApi(private val version: String = Account.DEFAULT_API_VERSION) {
         }
     }
 
+    /** What the token is allowed to do, from Meta's debug_token (needs the app ID and secret). */
+    data class TokenInfo(val userName: String, val scopes: Set<String>, val pageIds: List<String>, val igIds: List<String>)
+
+    suspend fun tokenInfo(userToken: String, appId: String, appSecret: String): TokenInfo {
+        val d = get("debug_token", mapOf("input_token" to userToken, "access_token" to "$appId|$appSecret")).optJSONObject("data") ?: JSONObject()
+        val scopes = d.optJSONArray("scopes")?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() } ?: emptySet()
+        val pageIds = linkedSetOf<String>(); val igIds = linkedSetOf<String>()
+        d.optJSONArray("granular_scopes")?.let { g ->
+            for (i in 0 until g.length()) {
+                val o = g.getJSONObject(i)
+                val ids = o.optJSONArray("target_ids")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList()
+                val scope = o.optString("scope")
+                if (scope.startsWith("pages_")) pageIds += ids
+                if (scope.startsWith("instagram_")) igIds += ids
+            }
+        }
+        val name = try { get("me", mapOf("fields" to "name", "access_token" to userToken)).optString("name") } catch (_: Exception) { "" }
+        return TokenInfo(name, scopes, pageIds.toList(), igIds.toList())
+    }
+
+    /**
+     * Pages owned through a Business portfolio often don't appear in me/accounts.
+     * Look them up one by one using the Page IDs the token was granted.
+     */
+    suspend fun pagesByIds(userToken: String, ids: List<String>): List<PageOption> = ids.mapNotNull { id ->
+        try {
+            val p = get(id, mapOf(
+                "fields" to "id,name,access_token,picture.type(large){url},instagram_business_account{id,username,profile_picture_url}",
+                "access_token" to userToken,
+            ))
+            val token = p.optString("access_token")
+            if (token.isBlank()) null else {
+                val ig = p.optJSONObject("instagram_business_account")
+                PageOption(
+                    id = p.getString("id"), name = p.optString("name"), token = token,
+                    picture = p.optJSONObject("picture")?.optJSONObject("data")?.optString("url").orEmpty(),
+                    igId = ig?.optString("id").orEmpty(), igUsername = ig?.optString("username").orEmpty(),
+                    igPicture = ig?.optString("profile_picture_url").orEmpty(),
+                )
+            }
+        } catch (_: Exception) { null }
+    }
+
     suspend fun pageWithToken(pageId: String, pageToken: String): PageOption {
         val p = get(pageId, mapOf(
             "fields" to "id,name,picture.type(large){url},instagram_business_account{id,username,profile_picture_url}",

@@ -138,8 +138,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     pendingPermanent = true
                 }
                 pendingUserToken = t
-                val pages = api.pages(t)
-                if (pages.isEmpty()) connectError.value = "No Pages found. Make sure you're an admin of a Facebook Page and allowed pages_show_list."
+                var pages = api.pages(t)
+                if (pages.isEmpty() && appId.isNotBlank() && appSecret.isNotBlank()) {
+                    val info = api.tokenInfo(t, appId.trim(), appSecret.trim())
+                    pages = api.pagesByIds(t, info.pageIds)
+                    if (pages.isEmpty()) {
+                        val needed = listOf("pages_show_list", "pages_manage_posts", "pages_read_engagement", "business_management")
+                        val missing = needed.filter { it !in info.scopes }
+                        connectError.value = when {
+                            missing.isNotEmpty() -> "This token is missing: ${missing.joinToString(", ")}. Generate a new token in Graph API Explorer with every permission ticked."
+                            info.pageIds.isEmpty() -> "This token has the right permissions but no Page was selected${if (info.userName.isNotBlank()) " for ${info.userName}" else ""}. In Graph API Explorer tap Generate Access Token again, choose \"Edit settings\" / \"Opt in to all current and future Pages\", and tick your Page and Instagram."
+                            else -> "Meta found your Page but won't give a Page token. Make sure you have full control of the Page (Page → Settings → Page access) and try again."
+                        }
+                    }
+                } else if (pages.isEmpty()) {
+                    connectError.value = "No Pages found. Add your App ID and App Secret below so ReelPilot can find Business-owned Pages, or regenerate the token and select your Page."
+                }
                 pageOptions.value = pages
             } catch (e: Exception) {
                 connectError.value = e.message ?: "Couldn't reach Meta. Check your internet."
