@@ -55,6 +55,8 @@ fun HomeScreen(vm: MainViewModel) {
     val account by vm.account.collectAsState()
     val jobs by vm.jobs.collectAsState()
     val live by vm.live.collectAsState()
+    val yt by vm.yt.collectAsState()
+    val canPost = account.facebookReady || yt.ready
     val today = SimpleDateFormat("EEEE d MMMM", Locale.getDefault()).format(Date())
 
     LazyColumn(Modifier.fillMaxWidth()) {
@@ -65,7 +67,7 @@ fun HomeScreen(vm: MainViewModel) {
                 Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth()
                     .clip(RoundedCornerShape(22.dp)).background(Pal.c.hero)
                     .clickable {
-                        if (account.facebookReady) vm.open(Overlay.Composer(Store.defaultFb, Store.defaultIg && account.instagramReady))
+                        if (canPost) vm.open(Overlay.Composer(Store.defaultFb && account.facebookReady, Store.defaultIg && account.instagramReady, Store.defaultYt && yt.ready))
                         else vm.open(Overlay.Connect)
                     }
                     .padding(22.dp),
@@ -73,9 +75,11 @@ fun HomeScreen(vm: MainViewModel) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Icon(Icons.Rounded.Movie, null, tint = Color.White, modifier = Modifier.size(34.dp))
                     Spacer(Modifier.height(6.dp))
-                    Text(if (account.facebookReady) "New Reel" else "Connect to start", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                    Text(if (canPost) "New Reel" else "Connect to start", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
                     Text(
-                        if (account.facebookReady) "Check your gameplay clip against Meta's rules and post it to ${if (account.instagramReady) "Facebook and Instagram" else "Facebook"} in one tap."
+                        if (canPost) "Check your gameplay clip and post it to " + listOfNotNull(
+                            if (account.facebookReady) "Facebook" else null, if (account.instagramReady) "Instagram" else null, if (yt.ready) "YouTube" else null,
+                        ).joinToString(", ") + " in one tap."
                         else "Link your Facebook Page and Instagram once. ReelPilot does the rest.",
                         color = Color.White.copy(alpha = 0.9f), fontSize = 15.sp, lineHeight = 21.sp,
                     )
@@ -84,18 +88,19 @@ fun HomeScreen(vm: MainViewModel) {
                         Modifier.clip(CircleShape).background(Color.White).padding(horizontal = 18.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(if (account.facebookReady) Icons.Rounded.Add else Icons.Rounded.Link, null, tint = Color(0xFF3A3AFF), modifier = Modifier.size(20.dp))
+                        Icon(if (canPost) Icons.Rounded.Add else Icons.Rounded.Link, null, tint = Color(0xFF3A3AFF), modifier = Modifier.size(20.dp))
                         Spacer(Modifier.size(6.dp))
-                        Text(if (account.facebookReady) "Create" else "Connect accounts", color = Color(0xFF3A3AFF), fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                        Text(if (canPost) "Create" else "Connect accounts", color = Color(0xFF3A3AFF), fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
                     }
                 }
             }
         }
 
-        if (account.facebookReady) item {
-            Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                StatTile("Facebook", "${Store.postsLast24h(true)}", "of 30 today", Pal.c.facebook, Modifier.weight(1f))
+        if (canPost) item {
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                StatTile("Facebook", if (account.facebookReady) "${Store.postsLast24h(true)}" else "–", if (account.facebookReady) "of 30 today" else "not linked", Pal.c.facebook, Modifier.weight(1f))
                 StatTile("Instagram", if (account.instagramReady) "${Store.postsLast24h(false)}" else "–", if (account.instagramReady) "of 100 today" else "not linked", Color(0xFFD62976), Modifier.weight(1f))
+                StatTile("YouTube", if (yt.ready) "${Store.ytLast24h()}" else "–", if (yt.ready) "today" else "not linked", Color(0xFFFF0000), Modifier.weight(1f))
             }
         }
 
@@ -127,7 +132,7 @@ private fun StatTile(title: String, big: String, small: String, color: Color, mo
             Spacer(Modifier.size(6.dp))
             Text(title, color = Pal.c.secondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         }
-        Text(big, color = Pal.c.label, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+        Text(big, color = Pal.c.label, fontSize = 26.sp, fontWeight = FontWeight.Bold)
         Text(small, color = Pal.c.secondary, fontSize = 13.sp)
     }
 }
@@ -145,6 +150,7 @@ fun JobCard(job: Job, live: Live?, onClick: () -> Unit) {
         }
         if (job.fb) PlatformLine("Facebook", job.fbState, job.fbMsg)
         if (job.ig) PlatformLine("Instagram", job.igState, if (job.schedule > 0) "Skipped: Instagram can't be scheduled" else job.igMsg)
+        if (job.yt) PlatformLine("YouTube", job.ytState, job.ytMsg)
         if (live != null && !job.finished) {
             ProgressBar(live.pct)
             Text("${live.phase} · ${(live.pct * 100).toInt()}%", color = Pal.c.secondary, fontSize = 12.sp)

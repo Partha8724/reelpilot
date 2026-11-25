@@ -20,6 +20,10 @@ import com.reelpilot.app.data.VideoInfo
 import com.reelpilot.app.data.VideoRules
 import com.reelpilot.app.work.UploadWorker
 import com.reelpilot.app.work.AutoWorker
+import com.reelpilot.app.data.YtAccount
+import com.reelpilot.app.data.YtChannel
+import com.reelpilot.app.data.YtVideo
+import com.reelpilot.app.data.YouTubeApi
 import com.reelpilot.app.data.AutoConfig
 import com.reelpilot.app.data.AutoItem
 import com.reelpilot.app.data.AutoStore
@@ -41,10 +45,11 @@ import java.util.UUID
 enum class Tab { Home, Auto, Facebook, Instagram, Settings }
 
 sealed interface Overlay {
-    data class Composer(val fb: Boolean, val ig: Boolean) : Overlay
+    data class Composer(val fb: Boolean, val ig: Boolean, val yt: Boolean = false) : Overlay
     data object Connect : Overlay
     data object Guide : Overlay
     data class JobDetail(val id: String) : Overlay
+    data object YouTube : Overlay
 }
 
 data class Live(val pct: Float, val phase: String)
@@ -192,7 +197,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearComposer() { video.value = null; postError.value = null }
 
-    fun post(caption: String, fb: Boolean, ig: Boolean, schedule: Long, ai: Boolean) {
+    fun post(caption: String, fb: Boolean, ig: Boolean, schedule: Long, ai: Boolean, yt: Boolean = false, ytTitle: String = "", ytPrivacy: String = "public") {
         val v = video.value ?: return
         viewModelScope.launch {
             posting.value = true; postError.value = null
@@ -209,6 +214,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     id = id, created = System.currentTimeMillis(), fileName = v.name, filePath = out.absolutePath,
                     caption = caption, fb = fb, ig = ig, schedule = schedule, aiLabel = ai,
                     fbMsg = if (fb) "Waiting…" else "", igMsg = if (ig && schedule == 0L) "Waiting…" else "",
+                    yt = yt, ytTitle = ytTitle, ytPrivacy = ytPrivacy, ytMsg = if (yt) "Waiting…" else "",
                 )
                 Store.saveJob(job)
                 UploadWorker.enqueue(getApplication<Application>(), id)
@@ -230,8 +236,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 fbState = if (it.fbState == Job.FAILED) Job.PENDING else it.fbState,
                 igState = if (it.igState == Job.FAILED) Job.PENDING else it.igState,
+                ytState = if (it.ytState == Job.FAILED) Job.PENDING else it.ytState,
                 fbMsg = if (it.fbState == Job.FAILED) "Waiting…" else it.fbMsg,
                 igMsg = if (it.igState == Job.FAILED) "Waiting…" else it.igMsg,
+                ytMsg = if (it.ytState == Job.FAILED) "Waiting…" else it.ytMsg,
             )
         }
         UploadWorker.enqueue(getApplication<Application>(), job.id)
@@ -243,8 +251,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 fbState = if (it.fbState in Job.END) it.fbState else Job.FAILED,
                 igState = if (it.igState in Job.END) it.igState else Job.FAILED,
+                ytState = if (it.ytState in Job.END) it.ytState else Job.FAILED,
                 fbMsg = if (it.fbState in Job.END) it.fbMsg else "Cancelled",
                 igMsg = if (it.igState in Job.END) it.igMsg else "Cancelled",
+                ytMsg = if (it.ytState in Job.END) it.ytMsg else "Cancelled",
             )
         }
     }
@@ -313,5 +323,49 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 autoError.value = "Couldn't read ${item.name}."
             } finally { previewBusy.value = false }
         }
+    }
+
+    // ---------------- YouTube ----------------
+
+    val yt: StateFlow<YtAccount> = Store.yt
+    val ytChannel = MutableStateFlow(Loadable<YtChannel>())
+    val ytVideos = MutableStateFlow(Loadable<List<YtVideo>>())
+    val ytBusy = MutableStateFlow(false)
+    val ytError = MutableStateFlow<String?>(null)
+
+    fun connectYouTube(clientId: String, clientSecret: String, refreshToken: String) {
+        val draft = YtAccount(clientId.trim(), clientSecret.trim(), refreshToken.trim())
+        if (!draft.ready) { ytError.value = "Fill in all three fields."; return }
+        viewModelScope.launch {
+            ytBusy.value = true; ytError.value = null
+            try {
+                val ch = YouTubeApi().channel(draft)
+                Store.saveYt(draft.copy(channelId = ch.id, channelTitle = ch.title, channelThumb = ch.thumb))
+                ytChannel.value = Loadable(ch)
+                loadYouTube()
+            } catch (e: Exception) {
+                ytError.value = e.message ?: "Couldn't connect to YouTube."
+            } finally { ytBusy.value = false }
+        }
+    }
+
+    fun loadYouTube() {
+        val y = Store.yt.value
+        if (!y.ready) return
+        viewModelScope.launch {
+            ytChannel.value = ytChannel.value.copy(loading = true, error = null)
+            try {
+                val api = YouTubeApi()
+                val ch = api.channel(y)
+                ytChannel.value = Loadable(ch)
+                ytVideos.value = Loadable(api.recent(y, ch.uploads))
+            } catch (e: Exception) {
+                ytChannel.value = Loadable(ytChannel.value.data, error = e.message)
+            }
+        }
+    }
+
+    fun disconnectYouTube() {
+        Store.disconnectYt(); ytChannel.value = Loadable(); ytVideos.value = Loadable()
     }
 }

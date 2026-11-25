@@ -25,12 +25,15 @@ data class AutoConfig(
     val tags: String = "#gaming #gameplay",
     val useAi: Boolean = false,
     val confirmedOriginal: Boolean = false,
+    val yt: Boolean = false,          // upload to YouTube with the API
+    val ytShare: Boolean = false,     // or send a "tap to post with the YouTube app" notification
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("enabled", enabled).put("folderUri", folderUri).put("folderName", folderName)
         .put("fb", fb).put("ig", ig).put("instant", instant).put("slots", JSONArray(slots.sorted()))
         .put("gapMinutes", gapMinutes).put("perDay", perDay).put("game", game).put("language", language)
         .put("tags", tags).put("useAi", useAi).put("confirmedOriginal", confirmedOriginal)
+        .put("yt", yt).put("ytShare", ytShare)
 
     companion object {
         fun fromJson(o: JSONObject): AutoConfig {
@@ -43,6 +46,7 @@ data class AutoConfig(
                 game = o.optString("game"), language = o.optString("language", "English"),
                 tags = o.optString("tags", "#gaming #gameplay"), useAi = o.optBoolean("useAi"),
                 confirmedOriginal = o.optBoolean("confirmedOriginal"),
+                yt = o.optBoolean("yt"), ytShare = o.optBoolean("ytShare"),
             )
         }
     }

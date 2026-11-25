@@ -53,9 +53,17 @@ data class Job(
     val igStep: Int = 0,         // 0 new, 1 uploaded, 2 published
     val fbLink: String = "",
     val igLink: String = "",
+    val yt: Boolean = false,
+    val ytTitle: String = "",
+    val ytPrivacy: String = "public",
+    val ytState: String = if (yt) PENDING else SKIPPED,
+    val ytMsg: String = "",
+    val ytUploadUrl: String = "",
+    val ytVideoId: String = "",
+    val ytLink: String = "",
 ) {
-    val finished get() = fbState in END && igState in END
-    val failed get() = fbState == FAILED || igState == FAILED
+    val finished get() = fbState in END && igState in END && ytState in END
+    val failed get() = fbState == FAILED || igState == FAILED || ytState == FAILED
     val headline get() = caption.lineSequence().firstOrNull { it.isNotBlank() }?.take(80) ?: fileName
 
     fun toJson(): JSONObject = JSONObject()
@@ -64,6 +72,8 @@ data class Job(
         .put("aiLabel", aiLabel).put("fbState", fbState).put("igState", igState)
         .put("fbMsg", fbMsg).put("igMsg", igMsg).put("fbVideoId", fbVideoId).put("fbStep", fbStep)
         .put("igContainer", igContainer).put("igStep", igStep).put("fbLink", fbLink).put("igLink", igLink)
+        .put("yt", yt).put("ytTitle", ytTitle).put("ytPrivacy", ytPrivacy).put("ytState", ytState).put("ytMsg", ytMsg)
+        .put("ytUploadUrl", ytUploadUrl).put("ytVideoId", ytVideoId).put("ytLink", ytLink)
 
     companion object {
         const val PENDING = "pending"
@@ -83,6 +93,9 @@ data class Job(
             fbVideoId = o.optString("fbVideoId"), fbStep = o.optInt("fbStep"),
             igContainer = o.optString("igContainer"), igStep = o.optInt("igStep"),
             fbLink = o.optString("fbLink"), igLink = o.optString("igLink"),
+            yt = o.optBoolean("yt"), ytTitle = o.optString("ytTitle"), ytPrivacy = o.optString("ytPrivacy", "public"),
+            ytState = o.optString("ytState", SKIPPED), ytMsg = o.optString("ytMsg"), ytUploadUrl = o.optString("ytUploadUrl"),
+            ytVideoId = o.optString("ytVideoId"), ytLink = o.optString("ytLink"),
         )
     }
 }
@@ -94,6 +107,9 @@ object Store {
 
     private val _account = MutableStateFlow(Account())
     val account: StateFlow<Account> = _account.asStateFlow()
+
+    private val _yt = MutableStateFlow(YtAccount())
+    val yt: StateFlow<YtAccount> = _yt.asStateFlow()
 
     private val _jobs = MutableStateFlow<List<Job>>(emptyList())
     val jobs: StateFlow<List<Job>> = _jobs.asStateFlow()
@@ -112,6 +128,11 @@ object Store {
             ctx.getSharedPreferences("reelpilot_fallback", Context.MODE_PRIVATE)
         }
         _account.value = readAccount()
+        _yt.value = YtAccount(
+            clientId = secure.getString("ytClientId", "") ?: "", clientSecret = secure.getString("ytClientSecret", "") ?: "",
+            refreshToken = secure.getString("ytRefresh", "") ?: "", channelId = secure.getString("ytChannelId", "") ?: "",
+            channelTitle = secure.getString("ytChannelTitle", "") ?: "", channelThumb = secure.getString("ytChannelThumb", "") ?: "",
+        )
         _jobs.value = readJobs()
     }
 
@@ -139,6 +160,19 @@ object Store {
             .apply()
         _account.value = a
     }
+
+    fun saveYt(y: YtAccount) {
+        secure.edit().putString("ytClientId", y.clientId).putString("ytClientSecret", y.clientSecret)
+            .putString("ytRefresh", y.refreshToken).putString("ytChannelId", y.channelId)
+            .putString("ytChannelTitle", y.channelTitle).putString("ytChannelThumb", y.channelThumb).apply()
+        _yt.value = y
+    }
+
+    fun disconnectYt() = saveYt(YtAccount())
+
+    var defaultYt: Boolean
+        get() = plain.getBoolean("defaultYt", true)
+        set(v) = plain.edit().putBoolean("defaultYt", v).apply()
 
     fun disconnect() = saveAccount(Account(apiVersion = _account.value.apiVersion))
 
@@ -195,5 +229,10 @@ object Store {
     fun postsLast24h(facebook: Boolean): Int {
         val since = System.currentTimeMillis() - 24 * 3600_000L
         return _jobs.value.count { it.created > since && if (facebook) it.fbState == Job.DONE else it.igState == Job.DONE }
+    }
+
+    fun ytLast24h(): Int {
+        val since = System.currentTimeMillis() - 24 * 3600_000L
+        return _jobs.value.count { it.created > since && it.ytState == Job.DONE }
     }
 }

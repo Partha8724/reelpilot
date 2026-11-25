@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.RocketLaunch
 import androidx.compose.material.icons.rounded.Translate
+import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -72,6 +73,7 @@ fun AutoScreen(vm: MainViewModel) {
     val preview by vm.captionPreview.collectAsState()
     val previewBusy by vm.previewBusy.collectAsState()
     val aiKey by vm.aiKey.collectAsState()
+    val ytAcct by vm.yt.collectAsState()
     var keyDraft by rememberSaveable { mutableStateOf(aiKey) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
@@ -81,10 +83,10 @@ fun AutoScreen(vm: MainViewModel) {
     val waiting = items.count { it.status == AutoItem.WAITING }
     val next = AutoStore.nextPostTime(now)
     val blockers = buildList {
-        if (!account.facebookReady) add("Connect your Facebook Page in Settings")
+        if (!account.facebookReady && !ytAcct.ready) add("Connect Facebook or YouTube in Settings")
         if (cfg.folderUri.isBlank()) add("Choose a folder for your clips")
         if (!cfg.confirmedOriginal) add("Confirm the clips are your own gameplay")
-        if (!(cfg.fb && account.facebookReady) && !(cfg.ig && account.instagramReady)) add("Turn on Facebook or Instagram")
+        if (!(cfg.fb && account.facebookReady) && !(cfg.ig && account.instagramReady) && !(cfg.yt && ytAcct.ready) && !cfg.ytShare) add("Turn on at least one place to post")
         if (!cfg.instant && cfg.slots.isEmpty()) add("Pick at least one posting time")
     }
 
@@ -141,8 +143,12 @@ fun AutoScreen(vm: MainViewModel) {
         Section("Post to") {
             ToggleCell("Facebook Reels", if (account.facebookReady) account.pageName else "Not connected", checked = cfg.fb && account.facebookReady,
                 icon = { IconTile(Icons.Rounded.Facebook, Pal.c.facebook) }) { v -> vm.updateAuto { it.copy(fb = v) } }
-            ToggleCell("Instagram Reels", if (account.instagramReady) "@${account.igUsername}" else "Not linked", checked = cfg.ig && account.instagramReady, divider = false,
+            ToggleCell("Instagram Reels", if (account.instagramReady) "@${account.igUsername}" else "Not linked", checked = cfg.ig && account.instagramReady,
                 icon = { IconTile(Icons.Rounded.CameraAlt, brush = Pal.c.instagram) }) { v -> vm.updateAuto { it.copy(ig = v) } }
+            ToggleCell("YouTube Shorts (direct upload)", if (ytAcct.ready) ytAcct.channelTitle.ifBlank { "Connected" } else "Not connected · tap to set up", checked = cfg.yt && ytAcct.ready,
+                icon = { IconTile(Icons.Rounded.SmartDisplay, Color(0xFFFF0000)) }) { v -> if (ytAcct.ready) vm.updateAuto { it.copy(yt = v) } else vm.open(Overlay.YouTube) }
+            ToggleCell("YouTube Shorts (tap notification)", "Get a notification. One tap posts it publicly with the YouTube app.", checked = cfg.ytShare, divider = false,
+                icon = { IconTile(Icons.Rounded.SmartDisplay, Pal.c.orange) }) { v -> vm.updateAuto { it.copy(ytShare = v) } }
         }
 
         // ---- schedule ----

@@ -33,6 +33,7 @@ import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.CameraAlt
 import androidx.compose.material.icons.rounded.Facebook
 import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.material.icons.rounded.Tag
 import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material3.CircularProgressIndicator
@@ -44,6 +45,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -60,6 +62,11 @@ import com.reelpilot.app.data.CaptionRules
 import com.reelpilot.app.data.Level
 import com.reelpilot.app.data.Store
 import com.reelpilot.app.data.VideoRules
+import com.reelpilot.app.data.YouTubeShare
+import com.reelpilot.app.ui.Overlay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.reelpilot.app.ui.MainViewModel
 import com.reelpilot.app.ui.components.Cell
 import com.reelpilot.app.ui.components.CheckRow
@@ -73,16 +80,21 @@ import com.reelpilot.app.ui.theme.Pal
 import java.util.Calendar
 
 @Composable
-fun ComposerScreen(vm: MainViewModel, presetFb: Boolean, presetIg: Boolean) {
+fun ComposerScreen(vm: MainViewModel, presetFb: Boolean, presetIg: Boolean, presetYt: Boolean = false) {
     val ctx = LocalContext.current
     val account by vm.account.collectAsState()
     val video by vm.video.collectAsState()
     val inspecting by vm.inspecting.collectAsState()
     val posting by vm.posting.collectAsState()
     val postError by vm.postError.collectAsState()
+    val ytAcct by vm.yt.collectAsState()
+    val scope = rememberCoroutineScope()
 
     var fb by rememberSaveable { mutableStateOf(presetFb && account.facebookReady) }
     var ig by rememberSaveable { mutableStateOf(presetIg && account.instagramReady) }
+    var yt by rememberSaveable { mutableStateOf(presetYt && ytAcct.ready) }
+    var ytTitle by rememberSaveable { mutableStateOf("") }
+    var ytPrivacy by rememberSaveable { mutableStateOf("public") }
     var own by rememberSaveable { mutableStateOf(false) }
     var added by rememberSaveable { mutableStateOf(false) }
     var notCopied by rememberSaveable { mutableStateOf(false) }
@@ -110,15 +122,15 @@ fun ComposerScreen(vm: MainViewModel, presetFb: Boolean, presetIg: Boolean) {
         if (videoChecks.any { it.level == Level.BAD }) add("Fix the red video checks")
         if (!(own && added && notCopied && music)) add("Confirm all originality checks")
         if (captionChecks.any { it.level == Level.BAD }) add("Fix the caption")
-        if (!fb && !ig) add("Pick Facebook or Instagram")
+        if (!fb && !ig && !yt) add("Pick Facebook, Instagram or YouTube")
         if (scheduleOn && (scheduleAt < System.currentTimeMillis() + 11 * 60_000 || scheduleAt > System.currentTimeMillis() + 29L * 86_400_000)) add("Pick a schedule time 11 min to 29 days ahead")
-        if (scheduleOn && !fb) add("Scheduling works for Facebook only")
+        if (scheduleOn && !fb && !yt) add("Scheduling works for Facebook and YouTube only")
     }
 
     fun close() { vm.clearComposer(); vm.back() }
     fun submit() {
         if (Build.VERSION.SDK_INT >= 33) notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
-        vm.post(caption, fb, ig && !scheduleOn, scheduleSec, ai)
+        vm.post(caption, fb, ig && !scheduleOn, scheduleSec, ai, yt, ytTitle, ytPrivacy)
     }
 
     Column(Modifier.fillMaxSize().imePadding()) {
@@ -190,11 +202,43 @@ fun ComposerScreen(vm: MainViewModel, presetFb: Boolean, presetIg: Boolean) {
                     icon = { IconTile(Icons.Rounded.Facebook, Pal.c.facebook) },
                 ) { if (account.facebookReady) fb = it }
                 ToggleCell(
-                    "Instagram Reels", if (account.instagramReady) "@${account.igUsername}" else "Not linked", checked = ig, divider = false,
+                    "Instagram Reels", if (account.instagramReady) "@${account.igUsername}" else "Not linked", checked = ig,
                     icon = { IconTile(Icons.Rounded.CameraAlt, brush = Pal.c.instagram) },
                 ) { if (account.instagramReady) ig = it }
+                ToggleCell(
+                    "YouTube Shorts", if (ytAcct.ready) ytAcct.channelTitle.ifBlank { "Connected" } else "Not connected · tap to set up", checked = yt, divider = false,
+                    icon = { IconTile(Icons.Rounded.SmartDisplay, Color(0xFFFF0000)) },
+                ) { if (ytAcct.ready) yt = it else vm.open(Overlay.YouTube) }
             }
-            Section("When", footer = "Meta's API can schedule Facebook Reels 10 minutes to 29 days ahead. Instagram can only be posted right away.") {
+            if (yt) Section("YouTube", footer = "Title defaults to your hook line. Hashtags become YouTube tags, and #Shorts is added to the description.") {
+                Field("Title (optional)", ytTitle, { ytTitle = it.take(100) }, hook.ifBlank { "Uses your hook line" })
+                Text("Visibility", color = Pal.c.secondary, fontSize = 13.sp, modifier = Modifier.padding(start = 16.dp, top = 8.dp))
+                Row(Modifier.padding(12.dp).fillMaxWidth().clip(RoundedCornerShape(9.dp)).background(Pal.c.fill).padding(2.dp)) {
+                    listOf("public" to "Public", "unlisted" to "Unlisted", "private" to "Private").forEach { (k, label) ->
+                        Box(
+                            Modifier.weight(1f).clip(RoundedCornerShape(7.dp))
+                                .background(if (ytPrivacy == k) (if (Pal.c.dark) Pal.c.elevated else Color.White) else Color.Transparent)
+                                .clickable { ytPrivacy = k }.padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center,
+                        ) { Text(label, color = Pal.c.label, fontSize = 14.sp, fontWeight = if (ytPrivacy == k) FontWeight.SemiBold else FontWeight.Normal) }
+                    }
+                }
+            }
+            video?.let { v ->
+                Section(footer = "Opens the YouTube app with your video, title and description filled in. Always posts publicly, even before your Google project passes YouTube's audit.") {
+                    Cell(
+                        "Post with the YouTube app instead", icon = { IconTile(Icons.Rounded.SmartDisplay, Color(0xFFFF0000)) }, chevron = true, divider = false,
+                        onClick = {
+                            scope.launch {
+                                val title = ytTitle.ifBlank { hook }.ifBlank { "Gameplay clip" }
+                                val intent = withContext(Dispatchers.IO) { YouTubeShare.intent(ctx, v.uri, title, caption + "\n\n#Shorts") }
+                                YouTubeShare.start(ctx, intent)
+                            }
+                        },
+                    )
+                }
+            }
+            Section("When", footer = "Facebook and YouTube can be scheduled 11 minutes to 29 days ahead. Meta's API can't schedule Instagram, so it's skipped when you schedule.") {
                 ToggleCell("Schedule", checked = scheduleOn, icon = { IconTile(Icons.Rounded.Schedule, Pal.c.orange) }) {
                     scheduleOn = it
                     if (it && scheduleAt == 0L) scheduleAt = defaultSlot()
@@ -229,9 +273,7 @@ fun ComposerScreen(vm: MainViewModel, presetFb: Boolean, presetIg: Boolean) {
                 when {
                     posting -> "Preparing…"
                     scheduleOn -> "Schedule Reel"
-                    fb && ig -> "Post to Facebook & Instagram"
-                    ig -> "Post to Instagram"
-                    else -> "Post to Facebook"
+                    else -> "Post to " + listOfNotNull(if (fb) "Facebook" else null, if (ig) "Instagram" else null, if (yt) "YouTube" else null).joinToString(" & ").ifBlank { "…" }
                 },
                 enabled = blockers.isEmpty(), loading = posting, onClick = ::submit,
             )

@@ -24,6 +24,7 @@ import com.reelpilot.app.data.Job
 import com.reelpilot.app.data.MetaApi
 import com.reelpilot.app.data.MetaError
 import com.reelpilot.app.data.Store
+import com.reelpilot.app.data.YouTubeApi
 import com.reelpilot.app.data.isTransient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
@@ -75,7 +76,6 @@ class UploadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
         val acct = Store.account.value
         val file = File(job.filePath)
 
-        if (!acct.facebookReady) return failAll(job, "Connect your Facebook Page in Settings first.")
         if (!file.exists()) return failAll(job, "The video file is gone. Please pick it again.")
 
         try { setForeground(foreground(0f, "Starting upload…")) } catch (_: Exception) { }
@@ -84,18 +84,26 @@ class UploadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
         val todo = buildList {
             if (job.fbState !in Job.END) add("fb")
             if (job.igState !in Job.END) add("ig")
+            if (job.ytState !in Job.END) add("yt")
         }
         var retry = false
         todo.forEachIndexed { i, p ->
             val base = i.toFloat() / todo.size
             val share = 1f / todo.size
             try {
-                if (p == "fb") {
-                    Store.updateJob(id) { it.copy(fbState = Job.RUNNING, fbMsg = "Uploading…") }
-                    runFacebook(api, acct, file, base, share)
-                } else {
-                    Store.updateJob(id) { it.copy(igState = Job.RUNNING, igMsg = "Uploading…") }
-                    runInstagram(api, acct, file, base, share)
+                when (p) {
+                    "fb" -> {
+                        Store.updateJob(id) { it.copy(fbState = Job.RUNNING, fbMsg = "Uploading…") }
+                        runFacebook(api, acct, file, base, share)
+                    }
+                    "ig" -> {
+                        Store.updateJob(id) { it.copy(igState = Job.RUNNING, igMsg = "Uploading…") }
+                        runInstagram(api, acct, file, base, share)
+                    }
+                    else -> {
+                        Store.updateJob(id) { it.copy(ytState = Job.RUNNING, ytMsg = "Uploading…") }
+                        runYouTube(file, base, share)
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -103,13 +111,21 @@ class UploadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
                 val msg = e.message ?: "Upload failed"
                 if (e.isTransient() && runAttemptCount < MAX_ATTEMPTS) {
                     retry = true
+                    val m = "Connection problem, retrying automatically…"
                     Store.updateJob(id) {
-                        if (p == "fb") it.copy(fbState = Job.RETRYING, fbMsg = "Connection problem, retrying automatically…")
-                        else it.copy(igState = Job.RETRYING, igMsg = "Connection problem, retrying automatically…")
+                        when (p) {
+                            "fb" -> it.copy(fbState = Job.RETRYING, fbMsg = m)
+                            "ig" -> it.copy(igState = Job.RETRYING, igMsg = m)
+                            else -> it.copy(ytState = Job.RETRYING, ytMsg = m)
+                        }
                     }
                 } else {
                     Store.updateJob(id) {
-                        if (p == "fb") it.copy(fbState = Job.FAILED, fbMsg = msg) else it.copy(igState = Job.FAILED, igMsg = msg)
+                        when (p) {
+                            "fb" -> it.copy(fbState = Job.FAILED, fbMsg = msg)
+                            "ig" -> it.copy(igState = Job.FAILED, igMsg = msg)
+                            else -> it.copy(ytState = Job.FAILED, ytMsg = msg)
+                        }
                     }
                 }
             }
@@ -127,6 +143,7 @@ class UploadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
     private suspend fun runFacebook(api: MetaApi, a: Account, file: File, base: Float, share: Float) {
         var job = Store.job(jobId)!!
         val token = a.pageToken
+        if (!a.facebookReady) throw MetaError("Connect your Facebook Page in Settings first.", 0, false)
 
         if (job.fbStep == 0) {
             var vid = job.fbVideoId
@@ -233,6 +250,48 @@ class UploadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
         progress(base + share, "Instagram · done")
     }
 
+    // ---------------- YouTube Shorts ----------------
+
+    private suspend fun runYouTube(file: File, base: Float, share: Float) {
+        var job = Store.job(jobId)!!
+        val y = Store.yt.value
+        if (!y.ready) throw MetaError("Connect YouTube in Settings first.", 0, false)
+        val yt = YouTubeApi()
+        val total = file.length()
+
+        var url = job.ytUploadUrl
+        var offset = 0L
+        var video: org.json.JSONObject? = null
+        if (url.isNotBlank()) {
+            val (got, done) = yt.progress(y, url, total)
+            if (got < 0) url = "" else { offset = got; video = done }
+        }
+        if (url.isBlank()) {
+            progress(base, "YouTube · starting")
+            url = yt.startUpload(y, file, YouTubeApi.metadata(job))
+            job = Store.updateJob(jobId) { it.copy(ytUploadUrl = url) }!!
+            offset = 0L
+        }
+        if (video == null) {
+            var result: org.json.JSONObject? = null
+            uploadWithProgress(file, offset, base, share * 0.95f, "YouTube · uploading") { cb ->
+                result = yt.upload(y, url, file, offset, cb)
+            }
+            video = result
+        }
+        val id = video?.optString("id").orEmpty()
+        if (id.isBlank()) throw MetaError("YouTube didn't confirm the upload.", 0, true)
+        val privacy = video?.optJSONObject("status")?.optString("privacyStatus").orEmpty()
+        val note = when {
+            job.schedule > 0 -> "Scheduled on YouTube"
+            privacy == "private" && job.ytPrivacy != "private" ->
+                "Uploaded as private. YouTube keeps API uploads private until your Google project passes its audit"
+            else -> "Published as a Short"
+        }
+        Store.updateJob(jobId) { it.copy(ytState = Job.DONE, ytVideoId = id, ytLink = "https://youtube.com/shorts/$id", ytMsg = note, ytUploadUrl = "") }
+        progress(base + share, "YouTube · done")
+    }
+
     // ---------------- helpers ----------------
 
     private suspend fun uploadWithProgress(
@@ -290,6 +349,7 @@ class UploadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
             it.copy(
                 fbState = if (it.fbState in Job.END) it.fbState else Job.FAILED, fbMsg = if (it.fbState in Job.END) it.fbMsg else msg,
                 igState = if (it.igState in Job.END) it.igState else Job.FAILED, igMsg = if (it.igState in Job.END) it.igMsg else msg,
+                ytState = if (it.ytState in Job.END) it.ytState else Job.FAILED, ytMsg = if (it.ytState in Job.END) it.ytMsg else msg,
             )
         }
         if (j != null) notifyDone(j)
@@ -302,14 +362,15 @@ class UploadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
         val ok = buildList {
             if (job.fbState == Job.DONE) add("Facebook")
             if (job.igState == Job.DONE) add("Instagram")
+            if (job.ytState == Job.DONE) add("YouTube")
         }
         val title = when {
             job.failed && ok.isEmpty() -> "Reel not posted"
             job.failed -> "Posted to ${ok.joinToString(" & ")}, one failed"
-            job.schedule > 0 -> "Reel scheduled on Facebook"
-            else -> "Reel posted to ${ok.joinToString(" & ")}"
+            job.schedule > 0 -> "Reel scheduled on ${ok.joinToString(" & ")}"
+            else -> "Reel posted to ${ok.joinToString(", ")}"
         }
-        val text = if (job.failed) listOf(job.fbMsg, job.igMsg).firstOrNull { it.isNotBlank() && it != "Published" } ?: "Open ReelPilot to retry."
+        val text = if (job.failed) listOf(job.fbMsg, job.igMsg, job.ytMsg).firstOrNull { it.isNotBlank() && it != "Published" } ?: "Open ReelPilot to retry."
         else job.headline
         val n = NotificationCompat.Builder(applicationContext, App.CHANNEL_RESULTS)
             .setSmallIcon(if (job.failed) android.R.drawable.stat_notify_error else android.R.drawable.stat_sys_upload_done)

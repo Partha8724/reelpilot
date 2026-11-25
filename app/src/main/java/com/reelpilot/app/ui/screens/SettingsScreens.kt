@@ -18,6 +18,7 @@ import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.MenuBook
 import androidx.compose.material.icons.rounded.Policy
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.material.icons.rounded.Tag
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -56,6 +57,8 @@ fun SettingsScreen(vm: MainViewModel) {
     var tags by rememberSaveable { mutableStateOf(Store.defaultTags) }
     var defFb by remember { mutableStateOf(Store.defaultFb) }
     var defIg by remember { mutableStateOf(Store.defaultIg) }
+    var defYt by remember { mutableStateOf(Store.defaultYt) }
+    val ytAcct by vm.yt.collectAsState()
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding()) {
         LargeTitle("Settings")
@@ -75,9 +78,19 @@ fun SettingsScreen(vm: MainViewModel) {
             }
         }
 
+        Section("YouTube") {
+            Cell(
+                if (ytAcct.ready) ytAcct.channelTitle.ifBlank { "YouTube connected" } else "Connect YouTube",
+                if (ytAcct.ready) "Shorts upload directly from ReelPilot" else "Post the same Reel as a YouTube Short",
+                icon = { IconTile(Icons.Rounded.SmartDisplay, androidx.compose.ui.graphics.Color(0xFFFF0000)) },
+                chevron = true, divider = false, onClick = { vm.open(Overlay.YouTube) },
+            )
+        }
+
         Section("New Reel defaults") {
             ToggleCell("Post to Facebook", checked = defFb) { defFb = it; Store.defaultFb = it }
             ToggleCell("Post to Instagram", checked = defIg) { defIg = it; Store.defaultIg = it }
+            ToggleCell("Post to YouTube", checked = defYt) { defYt = it; Store.defaultYt = it }
             Field("Default hashtags", tags, { tags = it; Store.defaultTags = it }, "#gaming #gameplay", divider = false)
         }
 
@@ -214,6 +227,7 @@ fun JobDetailScreen(vm: MainViewModel, id: String) {
             Section("Status") {
                 if (job.fb) Cell("Facebook", job.fbMsg.ifBlank { job.fbState }, icon = { StateIcon(job.fbState) }, chevron = job.fbLink.isNotBlank(), onClick = if (job.fbLink.isNotBlank()) ({ openUrl(ctx, job.fbLink) }) else null)
                 if (job.ig) Cell("Instagram", if (job.igState == Job.SKIPPED) "Skipped: Instagram can't be scheduled" else job.igMsg.ifBlank { job.igState }, icon = { StateIcon(job.igState) }, chevron = job.igLink.isNotBlank(), onClick = if (job.igLink.isNotBlank()) ({ openUrl(ctx, job.igLink) }) else null)
+                if (job.yt) Cell("YouTube", job.ytMsg.ifBlank { job.ytState }, icon = { StateIcon(job.ytState) }, chevron = job.ytLink.isNotBlank(), onClick = if (job.ytLink.isNotBlank()) ({ openUrl(ctx, job.ytLink) }) else null)
                 Cell("Created", value = ago(job.created), divider = false)
             }
             Section("Caption") { Text(job.caption.ifBlank { "No caption" }, color = Pal.c.label, fontSize = 15.sp, lineHeight = 21.sp, modifier = Modifier.padding(16.dp)) }

@@ -54,6 +54,7 @@ import com.reelpilot.app.ui.screens.HomeScreen
 import com.reelpilot.app.ui.screens.InstagramScreen
 import com.reelpilot.app.ui.screens.JobDetailScreen
 import com.reelpilot.app.ui.screens.SettingsScreen
+import com.reelpilot.app.ui.screens.YouTubeScreen
 import com.reelpilot.app.ui.theme.Pal
 
 @Composable
@@ -63,6 +64,7 @@ fun ReelPilotApp(vm: MainViewModel = viewModel()) {
     val account by vm.account.collectAsState()
 
     LaunchedEffect(account.pageId) { vm.loadFacebook(); vm.loadInstagram() }
+    LaunchedEffect(Unit) { vm.loadYouTube() }
     BackHandler(enabled = overlays.isNotEmpty()) { vm.back() }
 
     Box(Modifier.fillMaxSize().background(Pal.c.bg)) {
@@ -93,7 +95,8 @@ fun ReelPilotApp(vm: MainViewModel = viewModel()) {
         ) { o ->
             if (o != null) Box(Modifier.fillMaxSize().background(Pal.c.bg).statusBarsPadding()) {
                 when (o) {
-                    is Overlay.Composer -> ComposerScreen(vm, o.fb, o.ig)
+                    is Overlay.Composer -> ComposerScreen(vm, o.fb, o.ig, o.yt)
+                    Overlay.YouTube -> YouTubeScreen(vm)
                     Overlay.Connect -> ConnectScreen(vm)
                     Overlay.Guide -> GuideScreen(vm)
                     is Overlay.JobDetail -> JobDetailScreen(vm, o.id)

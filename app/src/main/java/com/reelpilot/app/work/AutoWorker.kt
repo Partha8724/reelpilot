@@ -26,6 +26,7 @@ import com.reelpilot.app.data.Job
 import com.reelpilot.app.data.Level
 import com.reelpilot.app.data.Store
 import com.reelpilot.app.data.VideoRules
+import com.reelpilot.app.data.YouTubeShare
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -88,7 +89,8 @@ class AutoWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
         val acct = Store.account.value
         val toFb = cfg.fb && acct.facebookReady
         val toIg = cfg.ig && acct.instagramReady
-        if (!toFb && !toIg || !cfg.confirmedOriginal) return Result.success()
+        val toYt = cfg.yt && Store.yt.value.ready
+        if (!toFb && !toIg && !toYt && !cfg.ytShare || !cfg.confirmedOriginal) return Result.success()
 
         // Is a post due?
         if (AutoStore.queuedToday() >= cfg.perDay) return Result.success()
@@ -103,7 +105,7 @@ class AutoWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
             val uri = Uri.parse(item.docId)
             val info = try { withContext(Dispatchers.IO) { VideoRules.inspect(applicationContext, uri) } } catch (e: Exception) { null }
             if (info == null) { AutoStore.upsert(item.copy(status = AutoItem.SKIPPED, message = "Can't read this file")); continue }
-            val bad = VideoRules.check(info, toFb, toIg).firstOrNull { it.level == Level.BAD }
+            val bad = VideoRules.check(info, toFb || (!toIg), toIg).firstOrNull { it.level == Level.BAD }
             if (bad != null) { AutoStore.upsert(item.copy(status = AutoItem.SKIPPED, message = bad.title)); notify("Skipped ${item.name}", bad.title + ". " + bad.detail); continue }
 
             val caption = CaptionMaker.make(applicationContext, uri, item.docId, info.durationSec, cfg)
@@ -118,20 +120,38 @@ class AutoWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
                 AutoStore.upsert(item.copy(status = AutoItem.SKIPPED, message = "Couldn't copy the video"))
                 continue
             }
-            Store.saveJob(
-                Job(
-                    id = id, created = System.currentTimeMillis(), fileName = info.name, filePath = out.absolutePath,
-                    caption = caption.text, fb = toFb, ig = toIg,
-                    fbMsg = if (toFb) "Waiting…" else "", igMsg = if (toIg) "Waiting…" else "",
+            if (toFb || toIg || toYt) {
+                Store.saveJob(
+                    Job(
+                        id = id, created = System.currentTimeMillis(), fileName = info.name, filePath = out.absolutePath,
+                        caption = caption.text, fb = toFb, ig = toIg,
+                        fbMsg = if (toFb) "Waiting…" else "", igMsg = if (toIg) "Waiting…" else "",
+                        yt = toYt, ytMsg = if (toYt) "Waiting…" else "",
+                    )
                 )
-            )
-            UploadWorker.enqueue(applicationContext, id)
+                UploadWorker.enqueue(applicationContext, id)
+            } else out.delete()
+            if (cfg.ytShare && !toYt) shareNotification(uri, caption.hook, caption.text)
             AutoStore.upsert(item.copy(status = AutoItem.QUEUED, jobId = id, queuedAt = System.currentTimeMillis(),
                 message = if (caption.byAi) "AI caption: ${caption.hook}" else caption.hook))
             notify("Auto Pilot is posting a Reel", caption.hook)
             break
         }
         return Result.success()
+    }
+
+    /** One tap opens the YouTube app with this clip, title and description filled in. */
+    private fun shareNotification(uri: Uri, title: String, text: String) {
+        try {
+            val intent = YouTubeShare.intent(applicationContext, uri, title.ifBlank { "Gameplay clip" }.take(100), text + "\n\n#Shorts")
+            val pi = PendingIntent.getActivity(applicationContext, uri.hashCode(), intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            val n = NotificationCompat.Builder(applicationContext, App.CHANNEL_RESULTS)
+                .setSmallIcon(android.R.drawable.ic_menu_upload)
+                .setContentTitle("Tap to post this Short on YouTube")
+                .setContentText(title)
+                .setAutoCancel(true).setContentIntent(pi).build()
+            applicationContext.getSystemService(NotificationManager::class.java).notify(uri.hashCode(), n)
+        } catch (_: Exception) { }
     }
 
     private fun notify(title: String, text: String) {
